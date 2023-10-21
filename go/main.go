@@ -248,7 +248,7 @@ func main() {
 		e.Logger.Fatalf("failed to connect db: %v", err)
 		return
 	}
-	db.SetMaxOpenConns(10)
+	db.SetMaxOpenConns(100)
 	defer db.Close()
 
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
@@ -1230,7 +1230,7 @@ func postIsuCondition(c echo.Context) error {
 
 func postIsuConditionWorker() {
 	rows := []InsertRow{}
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(300 * time.Millisecond)
 	for {
 		select {
 		case <-ticker.C:
