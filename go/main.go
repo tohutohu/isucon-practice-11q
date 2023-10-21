@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -258,6 +259,7 @@ func main() {
 	}
 
 	go postIsuConditionWorker()
+	go trendUpdater()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -338,6 +340,7 @@ func postInitialize(c echo.Context) error {
 	}
 
 	jiaIsuUUIDMap.Clear()
+	trendUpdate()
 
 	go func() {
 		if _, err := http.Get("http://192.168.0.11:9000/api/group/collect"); err != nil {
@@ -1084,14 +1087,17 @@ func calculateConditionLevel(condition string) (string, error) {
 	return conditionLevel, nil
 }
 
-// GET /api/trend
-// ISUの性格毎の最新のコンディション情報
-func getTrend(c echo.Context) error {
+var (
+	trendRWLock = sync.RWMutex{}
+	trendCache  = []byte{}
+)
+
+func trendUpdate() {
 	characterList := []string{}
 	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
 	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		log.Errorf("db error: %v", err)
+		return
 	}
 
 	res := []TrendResponse{}
@@ -1115,8 +1121,8 @@ func getTrend(c echo.Context) error {
 			"SELECT * FROM tmp WHERE row_number = 1 ORDER BY `timestamp` DESC",
 	)
 	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		log.Errorf("db error: %v", err)
+		return
 	}
 	charaMap := make(map[string]TrendResponse)
 	for _, isu := range isuList {
@@ -1148,7 +1154,32 @@ func getTrend(c echo.Context) error {
 	for _, character := range characterList {
 		res = append(res, charaMap[character])
 	}
-	return c.JSON(http.StatusOK, res)
+
+	trendRWLock.Lock()
+	trendCache, err = json.Marshal(res)
+	if err != nil {
+		log.Errorf("json marshal error: %v", err)
+		trendRWLock.Unlock()
+	}
+	trendRWLock.Unlock()
+}
+
+func trendUpdater() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	for {
+		select {
+		case <-ticker.C:
+			trendUpdate()
+		}
+	}
+}
+
+// GET /api/trend
+// ISUの性格毎の最新のコンディション情報
+func getTrend(c echo.Context) error {
+	trendRWLock.RLock()
+	defer trendRWLock.RUnlock()
+	return c.JSONBlob(http.StatusOK, trendCache)
 }
 
 type InsertRow struct {
