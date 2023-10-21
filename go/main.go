@@ -255,6 +255,8 @@ func main() {
 		return
 	}
 
+	go postIsuConditionWorker()
+
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
 }
@@ -1154,6 +1156,18 @@ func getTrend(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+type InsertRow struct {
+	JIAIsuUUID string    `db:"jia_isu_uuid"`
+	Timestamp  time.Time `db:"timestamp"`
+	IsSitting  bool      `db:"is_sitting"`
+	Condition  string    `db:"condition"`
+	Message    string    `db:"message"`
+}
+
+var (
+	insertRowCh = make(chan InsertRow, 10000)
+)
+
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
@@ -1194,14 +1208,6 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	type InsertRow struct {
-		JIAIsuUUID string    `db:"jia_isu_uuid"`
-		Timestamp  time.Time `db:"timestamp"`
-		IsSitting  bool      `db:"is_sitting"`
-		Condition  string    `db:"condition"`
-		Message    string    `db:"message"`
-	}
-	rows := make([]InsertRow, 0, len(req))
 	for _, cond := range req {
 		timestamp := time.Unix(cond.Timestamp, 0)
 
@@ -1209,22 +1215,13 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
-		rows = append(rows, InsertRow{
+		insertRowCh <- InsertRow{
 			JIAIsuUUID: jiaIsuUUID,
 			Timestamp:  timestamp,
 			IsSitting:  cond.IsSitting,
 			Condition:  cond.Condition,
 			Message:    cond.Message,
-		})
-	}
-	_, err = tx.NamedExec(
-		"INSERT INTO `isu_condition`"+
-			"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-			"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
-		rows)
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
+		}
 	}
 
 	err = tx.Commit()
@@ -1234,6 +1231,30 @@ func postIsuCondition(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusAccepted)
+}
+
+func postIsuConditionWorker() {
+	rows := []InsertRow{}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	for {
+		select {
+		case <-ticker.C:
+			if len(rows) == 0 {
+				continue
+			}
+			_, err := db.NamedExec(
+				"INSERT INTO `isu_condition`"+
+					"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+					"	VALUES (:jia_isu_uuid, :timestamp, :is_sitting, :condition, :message)",
+				rows)
+			if err != nil {
+				log.Errorf("db error: %v", err)
+			}
+			rows = []InsertRow{}
+		case row := <-insertRowCh:
+			rows = append(rows, row)
+		}
+	}
 }
 
 // ISUのコンディションの文字列がcsv形式になっているか検証
