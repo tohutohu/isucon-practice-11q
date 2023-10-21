@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -exu -o pipefail
+
 cd $(dirname $0)
 
 git pull
