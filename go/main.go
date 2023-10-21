@@ -25,6 +25,7 @@ import (
 	"github.com/labstack/gommon/log"
 
 	"github.com/kaz/pprotein/integration/echov4"
+	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
 const (
@@ -334,6 +335,8 @@ func postInitialize(c echo.Context) error {
 		c.Logger().Errorf("db error : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+
+	jiaIsuUUIDMap.Clear()
 
 	go func() {
 		if _, err := http.Get("http://192.168.0.11:9000/api/group/collect"); err != nil {
@@ -1165,14 +1168,15 @@ type InsertRow struct {
 }
 
 var (
-	insertRowCh = make(chan InsertRow, 10000)
+	insertRowCh   = make(chan InsertRow, 10000)
+	jiaIsuUUIDMap = cmap.New[struct{}]()
 )
 
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.8
+	dropProbability := 0.6
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
@@ -1191,21 +1195,17 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "bad request body")
 	}
 
-	tx, err := db.Beginx()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
-
-	var count int
-	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	if count == 0 {
-		return c.String(http.StatusNotFound, "not found: isu")
+	if !jiaIsuUUIDMap.Has(jiaIsuUUID) {
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		if count == 0 {
+			return c.String(http.StatusNotFound, "not found: isu")
+		}
+		jiaIsuUUIDMap.Set(jiaIsuUUID, struct{}{})
 	}
 
 	for _, cond := range req {
@@ -1224,7 +1224,6 @@ func postIsuCondition(c echo.Context) error {
 		}
 	}
 
-	err = tx.Commit()
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
