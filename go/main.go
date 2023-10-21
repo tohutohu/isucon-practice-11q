@@ -210,8 +210,8 @@ func init() {
 
 func main() {
 	e := echo.New()
-	e.Debug = true
-	e.Logger.SetLevel(log.DEBUG)
+	//e.Debug = true
+	e.Logger.SetLevel(log.ERROR)
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -336,10 +336,10 @@ func postInitialize(c echo.Context) error {
 	}
 
 	go func() {
-                if _, err := http.Get("http://localhost:9000/api/group/collect"); err != nil {
-                        log.Printf("failed to communicate with pprotein: %v", err)
-                }
-        }()
+		if _, err := http.Get("http://localhost:9000/api/group/collect"); err != nil {
+			log.Printf("failed to communicate with pprotein: %v", err)
+		}
+	}()
 
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
@@ -1113,7 +1113,7 @@ func getTrend(c echo.Context) error {
 		for _, isu := range isuList {
 			conditions := []IsuCondition{}
 			err = db.Select(&conditions,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC",
+				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY TIMESTAMP DESC",
 				isu.JIAIsuUUID,
 			)
 			if err != nil {
