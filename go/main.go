@@ -210,9 +210,8 @@ func init() {
 func main() {
 	e := echo.New()
 	//e.Debug = true
-	e.Logger.SetLevel(log.ERROR)
-
-	e.Use(middleware.Logger())
+	//e.Logger.SetLevel(log.ERROR)
+	//e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
 	echov4.EnableDebugHandler(e)
